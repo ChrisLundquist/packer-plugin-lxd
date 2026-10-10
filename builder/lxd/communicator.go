@@ -62,24 +62,29 @@ func (c *Communicator) Start(ctx context.Context, cmd *packersdk.RemoteCmd) erro
 func (c *Communicator) Upload(dst string, r io.Reader, fi *os.FileInfo) error {
 	ctx := context.TODO()
 
-	fileDestination := filepath.Join(c.ContainerName, dst)
 	// find out if the place we are pushing to is a directory
-	testDirectoryCommand := fmt.Sprintf(`test -d "%s"`, dst)
-	cmd := &packersdk.RemoteCmd{Command: testDirectoryCommand}
-	err := c.Start(ctx, cmd)
-
+	isDir, err := c.remoteTest(ctx, "-d", dst)
 	if err != nil {
 		log.Printf("Unable to check whether remote path is a dir: %s", err)
 		return err
 	}
-	cmd.Wait()
 
-	if cmd.ExitStatus() == 0 {
+	if isDir {
+		if fi == nil || *fi == nil {
+			return fmt.Errorf("cannot upload into directory %s without a source file name", dst)
+		}
 		log.Printf("path is a directory; copying file into directory.")
-		fileDestination = filepath.Join(c.ContainerName, dst, (*fi).Name())
+		dst = filepath.Join(dst, (*fi).Name())
 	}
 
-	cpCmd, err := c.CmdWrapper(fmt.Sprintf("lxc file push - %s", fileDestination))
+	exists, err := c.remoteTest(ctx, "-e", dst)
+	if err != nil {
+		log.Printf("Unable to check whether remote path exists: %s", err)
+		return err
+	}
+
+	fileDestination := filepath.Join(c.ContainerName, dst)
+	cpCmd, err := c.CmdWrapper(filePushCommand(fileDestination, fi, !exists))
 	if err != nil {
 		return err
 	}
@@ -89,6 +94,36 @@ func (c *Communicator) Upload(dst string, r io.Reader, fi *os.FileInfo) error {
 	command.Stdin = r
 
 	return command.Run()
+}
+
+// remoteTest reports whether `test <flag> <path>` succeeds in the container.
+func (c *Communicator) remoteTest(ctx context.Context, flag string, path string) (bool, error) {
+	cmd := &packersdk.RemoteCmd{Command: fmt.Sprintf(`test %s "%s"`, flag, path)}
+	if err := c.Start(ctx, cmd); err != nil {
+		return false, err
+	}
+	cmd.Wait()
+
+	return cmd.ExitStatus() == 0, nil
+}
+
+// filePushCommand builds the `lxc file push` that streams a file from stdin to
+// dst (<container>/<path>). Overwriting an existing file keeps its owner and
+// mode. A new file is created root-owned with the source file's permissions:
+// without the flags lxc takes both from its stdin pipe, i.e. the host user's
+// uid (ubuntu inside the container) and mode 0600, which root-owned services
+// can't read.
+func filePushCommand(dst string, fi *os.FileInfo, newFile bool) string {
+	if !newFile {
+		return fmt.Sprintf("lxc file push - %s", dst)
+	}
+
+	mode := ""
+	if fi != nil && *fi != nil {
+		mode = fmt.Sprintf(" --mode=%04o", (*fi).Mode().Perm())
+	}
+
+	return fmt.Sprintf("lxc file push --uid=0 --gid=0%s - %s", mode, dst)
 }
 
 func (c *Communicator) UploadDir(dst string, src string, exclude []string) error {
