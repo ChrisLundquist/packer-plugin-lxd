@@ -19,7 +19,9 @@ import (
 type Config struct {
 	common.PackerConfig `mapstructure:",squash"`
 	// The name of the output artifact. Defaults to
-	// name.
+	// name. If an image with this alias already exists, publishing fails
+	// unless Packer is run with `-force`, which moves the alias to the new
+	// image and leaves the previous image in place without it.
 	OutputImage   string `mapstructure:"output_image" required:"false"`
 	ContainerName string `mapstructure:"container_name"`
 	// The (optional) name of the LXD remote on which to publish the

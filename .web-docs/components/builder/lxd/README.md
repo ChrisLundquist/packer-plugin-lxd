@@ -68,7 +68,9 @@ build {
 <!-- Code generated from the comments of the Config struct in builder/lxd/config.go; DO NOT EDIT MANUALLY -->
 
 - `output_image` (string) - The name of the output artifact. Defaults to
-  name.
+  name. If an image with this alias already exists, publishing fails
+  unless Packer is run with `-force`, which moves the alias to the new
+  image and leaves the previous image in place without it.
 
 - `container_name` (string) - Container Name
 
